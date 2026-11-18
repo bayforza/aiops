@@ -1,0 +1,107 @@
+"""Measure RCA accuracy and latency of the configured local model on recorded incidents.
+
+    python -m eval.run_eval -c config.yaml           # rules + LLM
+    python -m eval.run_eval -c config.yaml --no-llm  # rules only (baseline)
+
+This table is the number to show customers: "on N incident types, model X on hardware Y
+finds the right root cause in Z% of cases in W seconds".
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import platform
+import time
+from pathlib import Path
+
+import yaml
+
+from aiops_copilot.collectors import FixtureCollector
+from aiops_copilot.config import load_settings
+from aiops_copilot.llm import LLMClient
+from aiops_copilot.models import Alert, IncidentContext
+from aiops_copilot.pipeline import Pipeline
+from aiops_copilot.runbooks import RunbookStore
+
+FIXTURES = Path(__file__).with_name("fixtures.yaml")
+
+
+def load_fixtures(path: Path = FIXTURES) -> list[dict]:
+    return yaml.safe_load(path.read_text())
+
+
+async def run_case(case: dict, settings, runbooks: RunbookStore, llm: LLMClient | None) -> dict:
+    ctx = IncidentContext.model_validate(case.get("context") or {})
+    pipeline = Pipeline(settings, [FixtureCollector(ctx, case.get("workload"))], runbooks, llm=llm)
+    t0 = time.perf_counter()
+    incident = await pipeline.run(Alert.model_validate(case["alert"]))
+    a = incident.analysis
+    return {
+        "name": case["name"],
+        "expected": case["expected_category"],
+        "got": a.category.value,
+        "ok": a.category.value == case["expected_category"],
+        "runbook_ok": a.runbook_id == case.get("expected_runbook"),
+        "confidence": a.confidence,
+        "source": a.source,
+        "seconds": round(time.perf_counter() - t0, 2),
+        "root_cause": a.root_cause,
+        "notes": a.notes,
+    }
+
+
+async def main_async(args) -> list[dict]:
+    settings = load_settings(args.config)
+    settings = settings.model_copy(update={"output_dir": "out/eval"})
+    runbooks = RunbookStore.from_dir(settings.runbooks_dir)
+    llm = None
+    if not args.no_llm and settings.llm.enabled:
+        c = settings.llm
+        llm = LLMClient(c.base_url, c.model, c.api_key, c.timeout_s, c.temperature, c.max_tokens)
+    cases = load_fixtures()
+    if args.only:
+        cases = [c for c in cases if args.only in c["name"]]
+    results = []
+    for case in cases:  # sequential: measures per-incident latency as a CPU host would see it
+        r = await run_case(case, settings, runbooks, llm)
+        results.append(r)
+        mark = "OK " if r["ok"] else "XX "
+        print(f"{mark} {r['name']:<28} expected={r['expected']:<14} got={r['got']:<14} "
+              f"conf={r['confidence']:.2f} src={r['source']:<18} {r['seconds']:>6.1f}s")
+    return results
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("-c", "--config", default=None)
+    p.add_argument("--no-llm", action="store_true", help="rules only")
+    p.add_argument("--only", help="run cases whose name contains this")
+    args = p.parse_args()
+    results = asyncio.run(main_async(args))
+    n = len(results)
+    acc = sum(r["ok"] for r in results) / n if n else 0
+    rb = sum(r["runbook_ok"] for r in results) / n if n else 0
+    secs = sorted(r["seconds"] for r in results)
+    settings = load_settings(args.config)
+    summary = {
+        "model": None if args.no_llm else settings.llm.model,
+        "host": f"{platform.system()} {platform.machine()}",
+        "cases": n,
+        "category_accuracy": round(acc, 3),
+        "runbook_accuracy": round(rb, 3),
+        "median_seconds": secs[n // 2] if n else 0,
+        "max_seconds": secs[-1] if n else 0,
+    }
+    print("\n" + json.dumps(summary, indent=2))
+    out = Path("out/eval")
+    out.mkdir(parents=True, exist_ok=True)
+    tag = "rules" if args.no_llm else settings.llm.model.replace(":", "_").replace("/", "_")
+    (out / f"results-{tag}.json").write_text(
+        json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

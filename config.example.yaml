@@ -1,0 +1,38 @@
+# Copy to config.yaml. Every value can stay as is for the local kind test environment.
+llm:
+  enabled: true
+  base_url: http://localhost:11434/v1   # Ollama; llama.cpp server: http://localhost:8081/v1
+  model: qwen2.5:7b-instruct            # 16 GB Mac. Lighter: qwen2.5:3b-instruct
+  timeout_s: 180
+  language: tr
+
+prometheus:
+  url: http://localhost:9090
+loki:
+  url: http://localhost:3100
+kubernetes:
+  enabled: true
+  context: kind-aiops
+
+gitops:
+  repo_path: .
+  manifests_dir: gitops/apps
+  github_repo: bayforza/aiops
+  base_branch: main
+  dry_run: true          # false = really push a branch and open a PR (needs GITHUB_TOKEN)
+
+policy:
+  autonomy_level: 1      # 0 = notify only, 1 = may open PRs (never merges, never executes)
+  min_confidence: 0.6
+
+context:
+  window_minutes: 30
+  max_log_lines: 500
+  budget_chars: 6000
+
+notify:
+  webhook_url: null      # Slack-compatible incoming webhook
+
+runbooks_dir: runbooks
+output_dir: out
+audit_path: out/audit.jsonl

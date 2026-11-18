@@ -1,0 +1,27 @@
+# Scenario "image-pull": `make scenario-image-pull` deploys a mistyped image tag.
+# Expected copilot fix: roll back to the previous image (runbook image-pull-fix).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-svc
+  namespace: demo
+  labels: {app: inventory-svc}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: inventory-svc}
+  template:
+    metadata:
+      labels: {app: inventory-svc}
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 5m
+            limits:
+              memory: 64Mi

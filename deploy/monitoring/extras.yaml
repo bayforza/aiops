@@ -1,0 +1,49 @@
+# Loki NodePort (so the copilot on the host reaches it at localhost:3100)
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-nodeport
+  namespace: monitoring
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/instance: loki
+    app.kubernetes.io/component: single-binary
+  ports:
+    - name: http
+      port: 3100
+      targetPort: 3100
+      nodePort: 30100
+---
+# Fast alerts for the demo namespace. The stock rules wait 15 minutes, too slow for a demo.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aiops-demo-rules
+  namespace: monitoring
+spec:
+  groups:
+    - name: aiops-demo
+      rules:
+        - alert: KubePodOOMKilled
+          expr: |
+            (max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}) == 1)
+            and on (namespace, pod, container)
+            (increase(kube_pod_container_status_restarts_total[10m]) > 0)
+          for: 0m
+          labels: {severity: warning}
+          annotations:
+            summary: "Container {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) OOMKilled"
+        - alert: KubePodCrashLooping
+          expr: max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace="demo"}) == 1
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+        - alert: KubeContainerWaiting
+          expr: max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"ErrImagePull|ImagePullBackOff|CreateContainerConfigError", namespace="demo"}) == 1
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: "Container {{ $labels.namespace }}/{{ $labels.pod }} waiting: {{ $labels.reason }}"

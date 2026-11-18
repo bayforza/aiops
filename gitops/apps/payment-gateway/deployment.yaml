@@ -1,0 +1,38 @@
+# Scenario "bad-deploy": `make scenario-bad-deploy` bumps the image to busybox:1.37, where the
+# start script simulates a regression (panic). Expected copilot fix: roll back to the previous image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-gateway
+  namespace: demo
+  labels: {app: payment-gateway}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: payment-gateway}
+  template:
+    metadata:
+      labels: {app: payment-gateway}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "payment-gateway starting"
+              if busybox | head -1 | grep -q "v1.37"; then
+                echo "loading payment routes"
+                echo "panic: runtime error: invalid memory address or nil pointer dereference"
+                echo "goroutine 1 [running]: main.(*Router).Register(0x0)"
+                exit 2
+              fi
+              echo "payment-gateway ready on :8080"
+              while true; do echo "healthcheck ok"; sleep 30; done
+          resources:
+            requests:
+              memory: 8Mi
+              cpu: 5m
+            limits:
+              memory: 32Mi
