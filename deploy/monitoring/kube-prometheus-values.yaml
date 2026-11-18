@@ -11,9 +11,11 @@ grafana:
     - name: Loki
       type: loki
       url: http://loki.monitoring.svc:3100
+  # Grafana 13 needs more than 256Mi at startup: at that limit it thrashes its page
+  # cache, never becomes healthy and is killed by the liveness probe.
   resources:
-    requests: {memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {memory: 256Mi}
+    limits: {memory: 640Mi}
 
 prometheus:
   service: {type: NodePort, nodePort: 30090}
