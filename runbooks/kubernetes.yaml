@@ -1,0 +1,103 @@
+# Runbook library. The copilot only proposes fixes that are defined here.
+# remediation.kind: gitops_patch (copilot may open a PR at autonomy level 1) | manual (suggestion only)
+
+- id: oom-increase-memory
+  title: Container OOMKilled - bellek limitini artır
+  category: oom
+  match:
+    signals: [oom_killed, memory_near_limit]
+    alerts: [KubePodOOMKilled, KubePodCrashLooping]
+  description: Container bellek limitine ulaşıp kernel tarafından sonlandırılıyor.
+  steps:
+    - Bellek kullanım grafiğini kontrol et; sürekli artış varsa bellek sızıntısı olabilir.
+    - Limit artışı geçici çözümdür; sızıntı şüphesi varsa uygulama ekibine bildir.
+  remediation:
+    kind: gitops_patch
+    action: increase_memory_limit
+    params: {factor: 1.5, max: 4Gi}
+
+- id: bad-deploy-rollback
+  title: Son deploy sonrası çökme - önceki imaja geri dön
+  category: bad_deploy
+  match:
+    signals: [recent_rollout, crash_loop, app_error]
+    alerts: [KubePodCrashLooping, KubeDeploymentReplicasMismatch]
+  description: Yeni imaj ile gelen değişiklik sonrası uygulama başlarken çöküyor.
+  steps:
+    - Yeni ve önceki revision arasındaki değişiklikleri (commit, imaj) incele.
+    - Önceki imaja geri dön, hatayı uygulama ekibiyle analiz et.
+  remediation:
+    kind: gitops_patch
+    action: rollback_image
+    params: {}
+
+- id: image-pull-fix
+  title: Imaj çekilemiyor - imaj etiketini düzelt
+  category: image_pull
+  match:
+    signals: [image_pull]
+    alerts: [KubeContainerWaiting, KubePodNotReady]
+  description: Imaj adı/etiketi yanlış ya da registry erişimi yok.
+  steps:
+    - Imaj etiketinin registry'de olduğunu doğrula.
+    - imagePullSecret ve registry erişimini kontrol et.
+    - Önceki çalışan imaj biliniyorsa ona geri dön.
+  remediation:
+    kind: gitops_patch
+    action: rollback_image
+    params: {}
+
+- id: config-error
+  title: Eksik/hatalı yapılandırma
+  category: config_error
+  match:
+    signals: [config_error]
+    alerts: [KubePodCrashLooping, KubeContainerWaiting]
+  description: Uygulama gerekli env değişkeni, ConfigMap veya Secret olmadan başlayamıyor.
+  steps:
+    - Eksik anahtarı loglardan belirle.
+    - İlgili ConfigMap/Secret'ın namespace'te var olduğunu ve deployment'a bağlandığını kontrol et.
+    - Secret değerleri copilot tarafından asla yazılmaz; sahibine yönlendir.
+  remediation:
+    kind: manual
+
+- id: disk-full
+  title: Disk dolu
+  category: disk_full
+  match:
+    signals: [disk_full]
+    alerts: [NodeFilesystemAlmostOutOfSpace, KubePersistentVolumeFillingUp]
+  description: Node veya volume üzerinde boş alan kalmadı.
+  steps:
+    - En çok yer kaplayan dizinleri bul (log, cache, eski imajlar).
+    - Log rotation ve retention ayarlarını kontrol et.
+    - Gerekirse PVC boyutunu artır.
+  remediation:
+    kind: manual
+
+- id: dependency-down
+  title: Bağımlı servise erişilemiyor
+  category: dependency
+  match:
+    signals: [dependency_down]
+    alerts: [KubePodCrashLooping, KubePodNotReady]
+  description: Uygulama DB, cache, harici API veya DNS'e bağlanamıyor.
+  steps:
+    - Hedef servisin ayakta olduğunu ve endpoint'lerinin dolu olduğunu kontrol et.
+    - NetworkPolicy ve DNS çözümlemesini doğrula.
+    - Sorun bağımlılıktaysa alert'i o servisin ekibine yönlendir.
+  remediation:
+    kind: manual
+
+- id: probe-failure
+  title: Probe başarısız
+  category: probe_failure
+  match:
+    signals: [probe_failure]
+    alerts: [KubePodNotReady]
+  description: Readiness/liveness probe zamanında başarılı olmuyor.
+  steps:
+    - Uygulamanın açılış süresini probe initialDelaySeconds ile karşılaştır.
+    - Probe endpoint'inin bağımlılıkları kontrol edip etmediğine bak.
+  remediation:
+    kind: manual

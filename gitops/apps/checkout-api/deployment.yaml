@@ -1,0 +1,39 @@
+# Scenario "oom": loads ~70 MB of cache at start-up but the limit is 64Mi, so it gets OOMKilled.
+# Expected copilot fix: raise the memory limit (runbook oom-increase-memory).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: demo
+  labels: {app: checkout-api}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: checkout-api}
+  template:
+    metadata:
+      labels: {app: checkout-api}
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command:
+            - python
+            - -c
+            - |
+              import time
+              print("checkout-api starting, loading product cache", flush=True)
+              cache = []
+              for i in range(14):
+                  cache.append(bytearray(5 * 1024 * 1024))
+                  print(f"cache chunk {i} loaded ({(i + 1) * 5} MB)", flush=True)
+                  time.sleep(0.5)
+              print("checkout-api ready", flush=True)
+              while True:
+                  time.sleep(60)
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 10m
+            limits:
+              memory: 64Mi
