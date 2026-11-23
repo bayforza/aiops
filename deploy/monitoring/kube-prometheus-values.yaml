@@ -46,7 +46,10 @@ alertmanager:
       repeat_interval: 1h
       routes:
         - receiver: "null"
-          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+          # Always-firing meta alerts, plus alerts a single-node kind cluster on a laptop
+          # raises by itself (clock sync, missed rule evaluations under memory pressure).
+          # Sending them to the copilot only produces noise incidents.
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor|PrometheusMissingRuleEvaluations|NodeClockNotSynchronising"']
     receivers:
       - name: "null"
       - name: aiops-copilot
