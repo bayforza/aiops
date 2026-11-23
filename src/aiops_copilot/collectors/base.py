@@ -32,8 +32,24 @@ def workload_from_pod(pod: str | None) -> str | None:
     return m.group("base") if m else None
 
 
+_REGEX_META = set(".^$*+?()[]{}|\\")
+
+
+def _quoted_regex_literal(name: str) -> str:
+    """Escape ``name`` for a regex placed inside a double-quoted PromQL/LogQL string.
+
+    ``re.escape`` is not usable here: it also escapes ``-`` and the resulting ``\\-``
+    is an invalid string escape in PromQL/LogQL (HTTP 400). Only real regex
+    metacharacters are escaped, and the backslash is doubled for the string literal.
+    """
+    return "".join("\\\\" + c if c in _REGEX_META else c for c in name)
+
+
 def pod_selector(target: Target) -> str:
-    """A PromQL/LogQL regex that matches all pods of the workload (pods get replaced)."""
+    """A PromQL/LogQL regex (as the inside of a double-quoted string) that matches
+    all pods of the workload (pods get replaced)."""
     if target.workload:
-        return f"{re.escape(target.workload)}-.*"
-    return re.escape(target.pod or ".*")
+        return f"{_quoted_regex_literal(target.workload)}-.*"
+    if target.pod:
+        return _quoted_regex_literal(target.pod)
+    return ".*"

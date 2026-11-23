@@ -20,7 +20,17 @@ TARGET = Target(namespace="demo", pod="checkout-api-6f7c9d8b5c-k2x9p", workload=
 def test_workload_from_pod():
     assert workload_from_pod("checkout-api-6f7c9d8b5c-k2x9p") == "checkout-api"
     assert workload_from_pod("standalone") is None
-    assert pod_selector(TARGET) == r"checkout\-api-.*"
+
+
+def test_pod_selector_is_valid_inside_promql_logql_strings():
+    # Hyphens must not be escaped: "\-" is an invalid string escape in PromQL/LogQL (HTTP 400).
+    sel = pod_selector(TARGET)
+    assert sel == "checkout-api-.*"
+    assert "\\-" not in sel
+    # A pod without a workload is matched literally; "." is escaped for the regex,
+    # with the backslash doubled for the double-quoted string.
+    assert pod_selector(Target(namespace="demo", pod="web-1.local")) == r"web-1\\.local"
+    assert pod_selector(Target(namespace="demo")) == ".*"
 
 
 @respx.mock
