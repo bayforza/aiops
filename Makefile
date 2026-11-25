@@ -2,7 +2,7 @@ SHELL := /bin/bash
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 CONFIG ?= config.yaml
 
-.PHONY: setup cluster monitoring up run eval eval-rules test lint down scenario-%
+.PHONY: setup cluster monitoring up run eval eval-rules demo-ui test lint down scenario-%
 
 setup:            ## install tools, pull the model, create venv (macOS)
 	./scripts/setup-mac.sh
@@ -33,6 +33,9 @@ eval:             ## RCA accuracy + latency of the local model on recorded incid
 
 eval-rules:       ## same, rules only (no LLM): the baseline the model must beat
 	$(PY) -m eval.run_eval -c $(CONFIG) --no-llm
+
+demo-ui:          ## fill the UI database with the recorded incidents (then: make run, open :8080/ui/)
+	$(PY) -m eval.run_eval -c $(CONFIG) --store out/aiops.db
 
 test:
 	$(PY) -m pytest -q

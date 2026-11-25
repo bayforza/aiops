@@ -6,6 +6,13 @@ llm:
   timeout_s: 180
   language: en                          # language of root_cause and notes from the model (en, tr, ...)
 
+# More local models, tried in order when the one before fails or times out. The UI shows which one answered.
+local_llms: []
+#  - name: gpt-oss-20b
+#    base_url: http://localhost:8081/v1     # e.g. a llama.cpp server on another host
+#    model: gpt-oss-20b
+#    timeout_s: 240
+
 prometheus:
   url: http://localhost:9090
 loki:
@@ -36,14 +43,16 @@ notify:
 runbooks_dir: runbooks
 output_dir: out
 audit_path: out/audit.jsonl
+store_path: out/aiops.db       # incidents, alerts and operator ratings shown in the UI
 
 # Week 2, hybrid AI: optional cloud second opinion. Off by default; nothing leaves the host unless
 # enabled AND the API key env var is set. Only an anonymised summary is sent (secrets removed,
 # names/IPs/hosts replaced with placeholders), never raw logs. Every call is in the audit log.
 cloud:
   enabled: false
-  base_url: https://api.openai.com/v1    # any OpenAI-compatible endpoint your organisation approved
-  model: gpt-4.1-mini
+  provider: openai                       # openai: any OpenAI-compatible endpoint | anthropic: Claude
+  base_url: https://api.openai.com/v1    # provider openai only
+  model: gpt-4.1-mini                    # provider anthropic: e.g. claude-opus-5-5 (pip install 'aiops-copilot[claude]')
   api_key_env: AIOPS_CLOUD_API_KEY       # the key itself is read from this env var, never from the file
   timeout_s: 60
   min_local_confidence: 0.6              # ask the cloud only if min(confidence, evidence score) is below this

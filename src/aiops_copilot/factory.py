@@ -8,8 +8,8 @@ import os
 from .actions import GitOpsActor
 from .audit import AuditLog
 from .collectors import GitChangesCollector, KubernetesCollector, LokiCollector, PrometheusCollector
-from .config import Settings
-from .llm import LLMClient
+from .config import CloudConfig, LLMConfig, Settings
+from .llm import ClaudeClient, LLMClient
 from .notify import Notifier
 from .pipeline import Pipeline
 from .runbooks import RunbookStore
@@ -30,22 +30,33 @@ def build_pipeline(s: Settings) -> Pipeline:
         collectors.append(LokiCollector(s.loki.url, max_lines=s.context.max_log_lines))
     collectors.append(GitChangesCollector(s.gitops.repo_path, s.gitops.manifests_dir))
 
-    llm = None
-    if s.llm.enabled:
-        llm = LLMClient(s.llm.base_url, s.llm.model, s.llm.api_key, s.llm.timeout_s,
-                        s.llm.temperature, s.llm.max_tokens)
-    cloud_llm = None
-    if s.cloud.enabled and os.environ.get(s.cloud.api_key_env):
-        cloud_llm = LLMClient(s.cloud.base_url, s.cloud.model, os.environ[s.cloud.api_key_env], s.cloud.timeout_s,
-                              s.llm.temperature, s.llm.max_tokens)
-        log.warning("cloud fallback enabled: anonymised summaries may be sent to %s", s.cloud.base_url)
+    llms = [_local_client(c) for c in [s.llm, *s.local_llms] if c.enabled]
     return Pipeline(
         settings=s,
         collectors=collectors,
         runbooks=RunbookStore.from_dir(s.runbooks_dir),
-        llm=llm,
+        llms=llms,
         actor=GitOpsActor(s.gitops, s.output_dir),
         notifier=Notifier(s.notify.webhook_url),
         audit=AuditLog(s.audit_path),
-        cloud_llm=cloud_llm,
+        cloud_llm=build_cloud_client(s.cloud, s.llm),
     )
+
+
+def _local_client(c: LLMConfig) -> LLMClient:
+    return LLMClient(c.base_url, c.model, c.api_key, c.timeout_s, c.temperature, c.max_tokens, name=c.name)
+
+
+def build_cloud_client(cloud: CloudConfig, llm: LLMConfig):
+    """The cloud second-opinion client, or None unless enabled and its API key env var is set."""
+    key = os.environ.get(cloud.api_key_env)
+    if not cloud.enabled or not key:
+        return None
+    if cloud.provider == "anthropic":
+        client = ClaudeClient(cloud.model, key, cloud.timeout_s, effort=cloud.effort, name=cloud.name, kind="cloud")
+    else:
+        client = LLMClient(cloud.base_url, cloud.model, key, cloud.timeout_s, llm.temperature, llm.max_tokens,
+                           name=cloud.name, kind="cloud")
+    log.warning("cloud second opinion enabled: anonymised summaries may be sent to %s (%s)",
+                cloud.provider, cloud.model)
+    return client

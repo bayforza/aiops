@@ -18,7 +18,18 @@ from .collectors.base import workload_from_pod
 from .confidence import assess
 from .config import Settings
 from .llm import LLMClient, build_messages
-from .models import Alert, Category, Incident, IncidentContext, RCAResult, Remediation, Signal, Target, utcnow
+from .models import (
+    Alert,
+    Category,
+    Incident,
+    IncidentContext,
+    ModelCall,
+    RCAResult,
+    Remediation,
+    Signal,
+    Target,
+    utcnow,
+)
 from .notify import Notifier
 from .preprocess import detect_signals, deterministic_rca, render_context, summarize_logs
 from .routing import CLOUD, decide
@@ -107,11 +118,13 @@ class Pipeline:
     def __init__(self, settings: Settings, collectors: list[Collector], runbooks: RunbookStore,
                  llm: LLMClient | None = None, actor: GitOpsActor | None = None,
                  notifier: Notifier | None = None, audit: AuditLog | None = None,
-                 cloud_llm: LLMClient | None = None):
+                 cloud_llm: LLMClient | None = None, llms: list | None = None):
         self.s = settings
         self.collectors = collectors
         self.runbooks = runbooks
-        self.llm = llm
+        # Local models in the order they are tried; the next one is used only if the previous one fails.
+        self.llms = list(llms) if llms is not None else ([llm] if llm is not None else [])
+        self.llm = self.llms[0] if self.llms else None
         self.actor = actor
         self.notifier = notifier
         self.audit = audit
@@ -121,14 +134,18 @@ class Pipeline:
         if self.audit:
             self.audit.append(event, incident.id, **data)
 
-    async def _collect(self, alert: Alert, target: Target, window: Window) -> IncidentContext:
+    async def _collect(self, alert: Alert, target: Target, window: Window,
+                       timings: dict[str, int] | None = None) -> IncidentContext:
         ctx = IncidentContext()
 
         async def run(c: Collector) -> None:
+            t = time.perf_counter()
             try:
                 await asyncio.wait_for(c.collect(alert, target, window, ctx), timeout=30)
             except Exception as exc:  # noqa: BLE001
                 ctx.errors.append(f"{c.name}: {exc}")
+            if timings is not None:
+                timings[f"collect.{c.name}"] = int((time.perf_counter() - t) * 1000)
 
         # Kubernetes first: it resolves the workload the other collectors filter on.
         first = [c for c in self.collectors if c.name in ("kubernetes", "fixture")]
@@ -138,37 +155,49 @@ class Pipeline:
         await asyncio.gather(*(run(c) for c in rest))
         return ctx
 
-    async def run(self, alert: Alert) -> Incident:
+    async def run(self, alert: Alert, received_at=None) -> Incident:
         t0 = time.perf_counter()
         target = target_from_alert(alert)
-        incident = Incident(id=incident_id(alert), alert=alert, target=target)
+        incident = Incident(id=incident_id(alert), alert=alert, target=target, received_at=received_at or utcnow())
+        if received_at is not None:
+            # Time spent waiting for the previous analysis to finish (one at a time on a CPU host).
+            incident.timings_ms["queue"] = max(0, int((utcnow() - received_at).total_seconds() * 1000))
         self._audit("alert_received", incident, alert=alert.name, labels=alert.labels)
 
         reference = alert.startsAt or utcnow()
         window = Window(start=reference - timedelta(minutes=self.s.context.window_minutes), end=utcnow())
-        incident.context = await self._collect(alert, target, window)
+        incident.context = await self._collect(alert, target, window, incident.timings_ms)
+        incident.timings_ms["collect"] = int((time.perf_counter() - t0) * 1000)
+        tp = time.perf_counter()
         incident.context.log_templates = summarize_logs(incident.context.log_lines)
         incident.signals = detect_signals(incident.context, reference, self.s.context.window_minutes)
-        incident.timings_ms["collect"] = int((time.perf_counter() - t0) * 1000)
+        incident.timings_ms["preprocess"] = int((time.perf_counter() - tp) * 1000)
 
         det = deterministic_rca(incident.signals)
         candidates = self.runbooks.match(incident.signals, alert)
         context_text = render_context(alert, target, incident.context, incident.signals,
                                       self.s.context.budget_chars)
-        llm_answer = None
-        if self.llm is not None:
-            t1 = time.perf_counter()
-            try:
-                llm_answer, usage = await self.llm.complete_json(
-                    build_messages(context_text, candidates, self.s.llm.language))
-                incident.timings_ms["llm"] = int((time.perf_counter() - t1) * 1000)
-                self._audit("llm_called", incident, model=self.llm.model, usage=usage,
-                            ms=incident.timings_ms["llm"])
-            except Exception as exc:  # noqa: BLE001 - fall back to rules
-                det.notes.append(f"LLM unavailable, using the rule-based result: {exc}")
-                self._audit("llm_failed", incident, error=str(exc)[:300])
+        llm_answer, answered = None, None
+        messages = build_messages(context_text, candidates, self.s.llm.language) if self.llms else []
+        t_llm = time.perf_counter()
+        for client in self.llms:
+            call, answer = await self._call(client, messages)
+            incident.model_calls.append(call)
+            if call.ok:
+                llm_answer, answered = answer, client
+                self._audit("llm_called", incident, name=call.name, model=call.model, ms=call.ms,
+                            usage={"prompt_tokens": call.prompt_tokens, "completion_tokens": call.completion_tokens})
+                break
+            self._audit("llm_failed", incident, name=call.name, model=call.model, error=call.error)
+        if self.llms:
+            incident.timings_ms["llm"] = int((time.perf_counter() - t_llm) * 1000)
+            if answered is None:
+                errors = "; ".join(f"{c.name}: {c.error}" for c in incident.model_calls)
+                det.notes.append(f"LLM unavailable, using the rule-based result: {errors}")
 
         result = merge_results(det, llm_answer, candidates)
+        if answered is not None and "llm" in result.source:
+            result.answered_by = {"name": answered.name, "model": answered.model, "kind": "local"}
         result = await self._verify_and_route(incident, det, llm_answer, result, candidates, context_text)
         runbook = self.runbooks.get(result.runbook_id)
         if runbook is None or runbook.category != result.category:
@@ -179,7 +208,9 @@ class Pipeline:
         self._audit("analysis_done", incident, category=result.category.value, confidence=result.confidence,
                     source=result.source, runbook=result.runbook_id)
 
+        ta = time.perf_counter()
         await self._act(incident)
+        incident.timings_ms["act"] = int((time.perf_counter() - ta) * 1000)
         incident.timings_ms["total"] = int((time.perf_counter() - t0) * 1000)
         self._save(incident)
         return incident
@@ -200,18 +231,18 @@ class Pipeline:
 
         anon = Anonymizer.for_incident(incident.target, incident.alert)
         masked = anon.mask(context_text)
-        t0 = time.perf_counter()
-        try:
-            messages = build_messages(masked, candidates, self.s.llm.language)
-            answer, usage = await self.cloud_llm.complete_json(messages)
-        except Exception as exc:  # noqa: BLE001 - the local answer stands
-            result.notes.append(f"Cloud second opinion failed, using the local result: {exc}")
-            self._audit("cloud_failed", incident, error=str(exc)[:300])
+        messages = build_messages(masked, candidates, self.s.llm.language)
+        call, answer = await self._call(self.cloud_llm, messages, kind="cloud")
+        incident.model_calls.append(call)
+        incident.timings_ms["cloud"] = call.ms
+        if not call.ok:
+            result.notes.append(f"Cloud second opinion failed, using the local result: {call.error}")
+            self._audit("cloud_failed", incident, name=call.name, error=call.error)
             return result
-        incident.timings_ms["cloud"] = int((time.perf_counter() - t0) * 1000)
         answer = anon.unmask_obj(answer)
-        self._audit("cloud_called", incident, model=self.cloud_llm.model, usage=usage,
-                    ms=incident.timings_ms["cloud"], masked_chars=len(masked),
+        usage = {"prompt_tokens": call.prompt_tokens, "completion_tokens": call.completion_tokens}
+        self._audit("cloud_called", incident, name=call.name, model=self.cloud_llm.model, usage=usage,
+                    ms=call.ms, masked_chars=len(masked),
                     placeholders=anon.replacements, secrets_removed=anon.secrets_removed)
 
         cloud_result = merge_results(det, answer, candidates)
@@ -219,6 +250,8 @@ class Pipeline:
         agrees = cloud_result.category == result.category
         opinion = {
             "model": self.cloud_llm.model,
+            "name": call.name,
+            "ms": call.ms,
             "category": cloud_result.category.value,
             "confidence": cloud_result.confidence,
             "evidence_score": cloud_ev.score,
@@ -242,12 +275,29 @@ class Pipeline:
                                                f"{local['category']} ({local['confidence']:.0%})."],
                 "evidence_score": cloud_ev.score, "confidence_reasons": cloud_ev.reasons,
                 "route": decision.route, "route_reason": decision.reason,
+                "answered_by": {"name": call.name, "model": self.cloud_llm.model, "kind": "cloud"},
             })
         else:
             result.notes.append(f"Cloud suggested a different category ({cloud_result.category.value}) "
                                 "but the evidence supports the local result; local result kept.")
         result.second_opinion = opinion
         return result
+
+    async def _call(self, client, messages: list[dict[str, str]], kind: str | None = None
+                    ) -> tuple[ModelCall, dict | None]:
+        t = time.perf_counter()
+        name = getattr(client, "name", client.model)
+        kind = kind or getattr(client, "kind", "local")
+        try:
+            answer, usage = await client.complete_json(messages)
+        except Exception as exc:  # noqa: BLE001 - the caller decides what to fall back to
+            ms = int((time.perf_counter() - t) * 1000)
+            return ModelCall(name=name, model=client.model, kind=kind, ok=False, ms=ms,
+                             error=(str(exc) or type(exc).__name__)[:300]), None
+        ms = int((time.perf_counter() - t) * 1000)
+        return ModelCall(name=name, model=client.model, kind=kind, ok=True, ms=ms,
+                         prompt_tokens=(usage or {}).get("prompt_tokens"),
+                         completion_tokens=(usage or {}).get("completion_tokens")), answer
 
     async def _act(self, incident: Incident) -> None:
         a = incident.analysis
