@@ -17,23 +17,23 @@ from .patches import PatchError, PatchResult, apply_action
 
 def render_pr_body(incident: Incident, patch: PatchResult) -> str:
     a = incident.analysis
-    evidence = "\n".join(f"- {e}" for e in a.evidence) or "- (yok)"
-    return f"""## AIOps Copilot önerisi
+    evidence = "\n".join(f"- {e}" for e in a.evidence) or "- (none)"
+    return f"""## AIOps Copilot proposal
 
 **Alert:** `{incident.alert.name}` · `{incident.target.namespace}/{incident.target.workload}`
-**Kategori:** `{a.category.value}` · **Güven:** {a.confidence:.0%} · **Kaynak:** {a.source}
+**Category:** `{a.category.value}` · **Confidence:** {a.confidence:.0%} · **Source:** {a.source}
 **Runbook:** `{a.runbook_id or '-'}`
 
-### Kök neden
+### Root cause
 {a.root_cause}
 
-### Kanıtlar
+### Evidence
 {evidence}
 
-### Önerilen değişiklik
+### Proposed change
 {patch.summary}
 
-> Bu PR otomatik oluşturuldu ve **insan onayı olmadan merge edilmemelidir**.
+> This PR was opened automatically and **must not be merged without human approval**.
 > Incident ID: `{incident.id}` (audit log'da izlenebilir)
 """
 

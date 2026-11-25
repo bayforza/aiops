@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import platform
 import time
 from pathlib import Path
@@ -32,9 +33,11 @@ def load_fixtures(path: Path = FIXTURES) -> list[dict]:
     return yaml.safe_load(path.read_text())
 
 
-async def run_case(case: dict, settings, runbooks: RunbookStore, llm: LLMClient | None) -> dict:
+async def run_case(case: dict, settings, runbooks: RunbookStore, llm: LLMClient | None,
+                   cloud_llm: LLMClient | None = None) -> dict:
     ctx = IncidentContext.model_validate(case.get("context") or {})
-    pipeline = Pipeline(settings, [FixtureCollector(ctx, case.get("workload"))], runbooks, llm=llm)
+    pipeline = Pipeline(settings, [FixtureCollector(ctx, case.get("workload"))], runbooks, llm=llm,
+                        cloud_llm=cloud_llm)
     t0 = time.perf_counter()
     incident = await pipeline.run(Alert.model_validate(case["alert"]))
     a = incident.analysis
@@ -46,6 +49,10 @@ async def run_case(case: dict, settings, runbooks: RunbookStore, llm: LLMClient 
         "runbook_ok": a.runbook_id == case.get("expected_runbook"),
         "confidence": a.confidence,
         "source": a.source,
+        "evidence_score": a.evidence_score,
+        "route": a.route,
+        "cloud_called": a.second_opinion is not None,
+        "cloud_agreed": (a.second_opinion or {}).get("agrees_with_local"),
         "seconds": round(time.perf_counter() - t0, 2),
         "root_cause": a.root_cause,
         "notes": a.notes,
@@ -60,16 +67,21 @@ async def main_async(args) -> list[dict]:
     if not args.no_llm and settings.llm.enabled:
         c = settings.llm
         llm = LLMClient(c.base_url, c.model, c.api_key, c.timeout_s, c.temperature, c.max_tokens)
+    cloud_llm = None
+    cc = settings.cloud
+    if args.cloud and cc.enabled and os.environ.get(cc.api_key_env):
+        cloud_llm = LLMClient(cc.base_url, cc.model, os.environ[cc.api_key_env], cc.timeout_s)
     cases = load_fixtures()
     if args.only:
         cases = [c for c in cases if args.only in c["name"]]
     results = []
     for case in cases:  # sequential: measures per-incident latency as a CPU host would see it
-        r = await run_case(case, settings, runbooks, llm)
+        r = await run_case(case, settings, runbooks, llm, cloud_llm)
         results.append(r)
         mark = "OK " if r["ok"] else "XX "
         print(f"{mark} {r['name']:<28} expected={r['expected']:<14} got={r['got']:<14} "
-              f"conf={r['confidence']:.2f} src={r['source']:<18} {r['seconds']:>6.1f}s")
+              f"conf={r['confidence']:.2f} ev={r['evidence_score'] or 0:.2f} src={r['source']:<18} "
+              f"route={r['route']:<10} {r['seconds']:>6.1f}s")
     return results
 
 
@@ -77,6 +89,8 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("-c", "--config", default=None)
     p.add_argument("--no-llm", action="store_true", help="rules only")
+    p.add_argument("--cloud", action="store_true",
+                   help="allow cloud second opinions (needs cloud.enabled and the API key env var)")
     p.add_argument("--only", help="run cases whose name contains this")
     args = p.parse_args()
     results = asyncio.run(main_async(args))
@@ -93,6 +107,11 @@ def main() -> int:
         "runbook_accuracy": round(rb, 3),
         "median_seconds": secs[n // 2] if n else 0,
         "max_seconds": secs[-1] if n else 0,
+        # Week 2 (hybrid AI): how often the cloud would be / was asked, and whether it changed anything.
+        "mean_evidence_score": round(sum(r["evidence_score"] or 0 for r in results) / n, 3) if n else 0,
+        "cloud_route_rate": round(sum(r["route"] == "cloud" for r in results) / n, 3) if n else 0,
+        "cloud_called": sum(r["cloud_called"] for r in results),
+        "cloud_agreed": sum(bool(r["cloud_agreed"]) for r in results),
     }
     print("\n" + json.dumps(summary, indent=2))
     out = Path("out/eval")

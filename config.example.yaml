@@ -4,7 +4,7 @@ llm:
   base_url: http://localhost:11434/v1   # Ollama; llama.cpp server: http://localhost:8081/v1
   model: qwen2.5:7b-instruct            # 16 GB Mac. Lighter: qwen2.5:3b-instruct
   timeout_s: 180
-  language: tr
+  language: en                          # language of root_cause and notes from the model (en, tr, ...)
 
 prometheus:
   url: http://localhost:9090
@@ -36,3 +36,17 @@ notify:
 runbooks_dir: runbooks
 output_dir: out
 audit_path: out/audit.jsonl
+
+# Week 2, hybrid AI: optional cloud second opinion. Off by default; nothing leaves the host unless
+# enabled AND the API key env var is set. Only an anonymised summary is sent (secrets removed,
+# names/IPs/hosts replaced with placeholders), never raw logs. Every call is in the audit log.
+cloud:
+  enabled: false
+  base_url: https://api.openai.com/v1    # any OpenAI-compatible endpoint your organisation approved
+  model: gpt-4.1-mini
+  api_key_env: AIOPS_CLOUD_API_KEY       # the key itself is read from this env var, never from the file
+  timeout_s: 60
+  min_local_confidence: 0.6              # ask the cloud only if min(confidence, evidence score) is below this
+  local_only_namespaces: []              # e.g. [core-banking, card-vault]: never leave the organisation
+  classification_label: data_classification
+  local_only_classifications: [restricted, confidential]

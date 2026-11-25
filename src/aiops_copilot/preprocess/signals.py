@@ -103,14 +103,14 @@ _RULES: list[tuple[Category, set[str], set[str]]] = [
 ]
 
 _SUMMARY_TR = {
-    Category.IMAGE_PULL: "Container imajı çekilemiyor; imaj adı/etiketi ya da registry erişimi hatalı.",
-    Category.OOM: "Container bellek limitini aştığı için OOMKilled ile sonlandırılıyor.",
-    Category.CONFIG_ERROR: "Uygulama eksik ya da hatalı yapılandırma (env/ConfigMap/Secret) yüzünden başlayamıyor.",
-    Category.DISK_FULL: "Disk alanı dolmuş; uygulama veya node yazamıyor.",
-    Category.BAD_DEPLOY: "Son deploy ile gelen yeni imaj sonrasında uygulama çöküyor; değişiklik kaynaklı hata.",
-    Category.DEPENDENCY: "Uygulama bağımlı olduğu bir servise (DB, API, DNS) bağlanamıyor.",
-    Category.PROBE_FAILURE: "Readiness/liveness probe başarısız; uygulama zamanında sağlıklı yanıt vermiyor.",
-    Category.UNKNOWN: "Kesin bir kök neden sinyali bulunamadı; manuel inceleme gerekiyor.",
+    Category.IMAGE_PULL: "The container image cannot be pulled; the image name/tag or registry access is wrong.",
+    Category.OOM: "The container exceeds its memory limit and is terminated with OOMKilled.",
+    Category.CONFIG_ERROR: "The application cannot start: missing or invalid configuration (env/ConfigMap/Secret).",
+    Category.DISK_FULL: "Disk space is exhausted; the application or node cannot write.",
+    Category.BAD_DEPLOY: "The application crashes on the new image from the latest deploy; a change-induced failure.",
+    Category.DEPENDENCY: "The application cannot reach a service it depends on (DB, API, DNS).",
+    Category.PROBE_FAILURE: "Readiness/liveness probe failing; the application does not answer healthy in time.",
+    Category.UNKNOWN: "No definitive root-cause signal found; manual investigation needed.",
 }
 
 

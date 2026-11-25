@@ -42,7 +42,7 @@ def llm_reply(obj: dict) -> httpx.Response:
 def test_llm_fills_rule_gap(settings, runbooks):
     route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=llm_reply({
         "category": "config_error", "confidence": 0.8,
-        "root_cause": "rules.yaml dosyasında YAML sözdizimi hatası var.",
+        "root_cause": "rules.yaml has a YAML syntax error.",
         "evidence": ["yaml: line 12: mapping values are not allowed"], "runbook_id": None}))
     c = case("config-yaml-parse-error")
     inc = asyncio.run(make_pipeline(settings, runbooks, c, LLMClient(LLM_URL, "m")).run(
@@ -63,7 +63,7 @@ def test_llm_failure_falls_back_to_rules(settings, runbooks):
     inc = asyncio.run(make_pipeline(settings, runbooks, c, LLMClient(LLM_URL, "m")).run(
         Alert.model_validate(c["alert"])))
     assert inc.analysis.category.value == "oom"
-    assert any("LLM kullanılamadı" in n for n in inc.analysis.notes)
+    assert any("LLM unavailable" in n for n in inc.analysis.notes)
     ok, _ = AuditLog(settings.audit_path).verify()
     assert ok
 
@@ -86,7 +86,7 @@ def test_level0_only_previews(settings, runbooks):
     c = case("oom-checkout-cache")
     inc = asyncio.run(make_pipeline(settings, runbooks, c, actor=actor).run(Alert.model_validate(c["alert"])))
     assert inc.actions[0].kind == "dry_run_patch"
-    assert any("PR açılmadı" in n for n in inc.analysis.notes)
+    assert any("No PR opened" in n for n in inc.analysis.notes)
 
 
 def _git(cwd, *args):
@@ -118,7 +118,7 @@ def test_pull_request_mode(settings, runbooks, tmp_path, root, monkeypatch):
     assert act.url.endswith("/pull/1")
     req = json.loads(pr.calls[0].request.content)
     assert req["head"] == f"aiops/{inc.id}" and req["base"] == "main"
-    assert "insan onayı olmadan merge edilmemelidir" in req["body"]
+    assert "must not be merged without human approval" in req["body"]
     branches = subprocess.run(["git", "-C", str(remote), "branch"], capture_output=True, text=True).stdout
     assert f"aiops/{inc.id}" in branches
     # The operator's checkout is untouched.
@@ -142,3 +142,58 @@ def test_webhook_dedupes_and_records(settings, runbooks):
         assert items[0]["category"] == "image_pull"
         detail = client.get(f"/incidents/{items[0]['id']}").json()
         assert detail["analysis"]["remediation"]["params"]["image"] == "nginx:1.27-alpine"
+
+
+CLOUD_URL = "http://cloud.test/v1"
+
+
+def cloud_settings(settings, monkeypatch, **kw):
+    monkeypatch.setenv("AIOPS_CLOUD_API_KEY", "test-key")
+    settings.cloud = settings.cloud.model_copy(update={"enabled": True, "base_url": CLOUD_URL, **kw})
+    return settings
+
+
+def run_with_cloud(settings, runbooks, name: str) -> object:
+    c = case(name)
+    ctx = IncidentContext.model_validate(c.get("context") or {})
+    pipeline = Pipeline(settings, [FixtureCollector(ctx, c.get("workload"))], runbooks,
+                        cloud_llm=LLMClient(CLOUD_URL, "cloud-model"), audit=AuditLog(settings.audit_path))
+    return asyncio.run(pipeline.run(Alert.model_validate(c["alert"])))
+
+
+@respx.mock
+def test_uncertain_incident_gets_anonymised_cloud_opinion(settings, runbooks, monkeypatch):
+    cloud_settings(settings, monkeypatch)
+    route = respx.post(f"{CLOUD_URL}/chat/completions").mock(return_value=llm_reply({
+        "category": "dependency", "confidence": 0.9,
+        "root_cause": "WORKLOAD_1 is waiting on a slow downstream service.", "evidence": [], "runbook_id": None}))
+    inc = run_with_cloud(settings, runbooks, "latency-no-signal")
+    sent = json.loads(route.calls[0].request.content)["messages"][1]["content"]
+    assert "orders-api" not in sent and "shop" not in sent and "WORKLOAD_1" in sent
+    a = inc.analysis
+    assert a.route == "cloud"
+    assert a.second_opinion["sent_payload"] == sent
+    assert a.category.value == "dependency" and a.source.startswith("cloud")
+    assert "orders-api" in a.root_cause  # mapped back for the operator
+    assert a.confidence <= 0.3  # unsupported by evidence, so no PR on the cloud's word alone
+    events = [json.loads(line)["event"] for line in Path(settings.audit_path).read_text().splitlines()]
+    assert "route_decided" in events and "cloud_called" in events
+
+
+@respx.mock
+def test_strong_local_result_and_local_only_namespace_never_call_cloud(settings, runbooks, monkeypatch):
+    route = respx.post(f"{CLOUD_URL}/chat/completions").mock(return_value=llm_reply({}))
+    inc = run_with_cloud(cloud_settings(settings, monkeypatch), runbooks, "oom-checkout-cache")
+    assert inc.analysis.route == "local" and inc.analysis.second_opinion is None
+    cloud_settings(settings, monkeypatch, local_only_namespaces=["shop"])
+    inc = run_with_cloud(settings, runbooks, "latency-no-signal")
+    assert inc.analysis.route == "local_only"
+    assert not route.called
+
+
+@respx.mock
+def test_cloud_failure_keeps_local_result(settings, runbooks, monkeypatch):
+    respx.post(f"{CLOUD_URL}/chat/completions").mock(return_value=httpx.Response(503))
+    inc = run_with_cloud(cloud_settings(settings, monkeypatch), runbooks, "latency-no-signal")
+    assert inc.analysis.category.value == "unknown"
+    assert any("Cloud second opinion failed" in n for n in inc.analysis.notes)

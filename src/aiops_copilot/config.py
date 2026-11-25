@@ -18,7 +18,25 @@ class LLMConfig(BaseModel):
     timeout_s: float = 180.0
     temperature: float = 0.1
     max_tokens: int = 800
-    language: str = "tr"
+    language: str = "en"
+
+
+class CloudConfig(BaseModel):
+    """Optional second opinion from a cloud model. Off by default; see routing.py."""
+
+    enabled: bool = False
+    # Any OpenAI-compatible endpoint the organisation has approved (in-country provider, Azure, ...).
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4.1-mini"
+    api_key_env: str = "AIOPS_CLOUD_API_KEY"
+    timeout_s: float = 60.0
+    # Ask the cloud only when min(final confidence, evidence score) is below this.
+    min_local_confidence: float = 0.6
+    # Incidents from these namespaces never leave the organisation.
+    local_only_namespaces: list[str] = Field(default_factory=list)
+    # Alert label that marks data classification; these values never leave the organisation.
+    classification_label: str = "data_classification"
+    local_only_classifications: list[str] = Field(default_factory=lambda: ["restricted", "confidential"])
 
 
 class PrometheusConfig(BaseModel):
@@ -75,6 +93,7 @@ class NotifyConfig(BaseModel):
 
 class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    cloud: CloudConfig = Field(default_factory=CloudConfig)
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     loki: LokiConfig = Field(default_factory=LokiConfig)
     kubernetes: KubernetesConfig = Field(default_factory=KubernetesConfig)
@@ -90,6 +109,7 @@ class Settings(BaseModel):
 _ENV_OVERRIDES = {
     "AIOPS_LLM_BASE_URL": ("llm", "base_url"),
     "AIOPS_LLM_MODEL": ("llm", "model"),
+    "AIOPS_CLOUD_ENABLED": ("cloud", "enabled"),
     "AIOPS_PROMETHEUS_URL": ("prometheus", "url"),
     "AIOPS_LOKI_URL": ("loki", "url"),
     "AIOPS_AUTONOMY_LEVEL": ("policy", "autonomy_level"),

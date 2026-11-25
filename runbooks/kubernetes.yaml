@@ -2,102 +2,102 @@
 # remediation.kind: gitops_patch (copilot may open a PR at autonomy level 1) | manual (suggestion only)
 
 - id: oom-increase-memory
-  title: Container OOMKilled - bellek limitini artır
+  title: Container OOMKilled - increase the memory limit
   category: oom
   match:
     signals: [oom_killed, memory_near_limit]
     alerts: [KubePodOOMKilled, KubePodCrashLooping]
-  description: Container bellek limitine ulaşıp kernel tarafından sonlandırılıyor.
+  description: The container reaches its memory limit and is killed by the kernel.
   steps:
-    - Bellek kullanım grafiğini kontrol et; sürekli artış varsa bellek sızıntısı olabilir.
-    - Limit artışı geçici çözümdür; sızıntı şüphesi varsa uygulama ekibine bildir.
+    - Check the memory usage graph; steady growth may mean a memory leak.
+    - Raising the limit is a temporary fix; if a leak is suspected, tell the application team.
   remediation:
     kind: gitops_patch
     action: increase_memory_limit
     params: {factor: 1.5, max: 4Gi}
 
 - id: bad-deploy-rollback
-  title: Son deploy sonrası çökme - önceki imaja geri dön
+  title: Crash after the latest deploy - roll back to the previous image
   category: bad_deploy
   match:
     signals: [recent_rollout, crash_loop, app_error]
     alerts: [KubePodCrashLooping, KubeDeploymentReplicasMismatch]
-  description: Yeni imaj ile gelen değişiklik sonrası uygulama başlarken çöküyor.
+  description: The application crashes on startup after the change shipped in the new image.
   steps:
-    - Yeni ve önceki revision arasındaki değişiklikleri (commit, imaj) incele.
-    - Önceki imaja geri dön, hatayı uygulama ekibiyle analiz et.
+    - Review the changes (commits, image) between the new and previous revision.
+    - Roll back to the previous image and analyse the error with the application team.
   remediation:
     kind: gitops_patch
     action: rollback_image
     params: {}
 
 - id: image-pull-fix
-  title: Imaj çekilemiyor - imaj etiketini düzelt
+  title: Image cannot be pulled - fix the image tag
   category: image_pull
   match:
     signals: [image_pull]
     alerts: [KubeContainerWaiting, KubePodNotReady]
-  description: Imaj adı/etiketi yanlış ya da registry erişimi yok.
+  description: The image name/tag is wrong or the registry is not reachable.
   steps:
-    - Imaj etiketinin registry'de olduğunu doğrula.
-    - imagePullSecret ve registry erişimini kontrol et.
-    - Önceki çalışan imaj biliniyorsa ona geri dön.
+    - Verify that the image tag exists in the registry.
+    - Check imagePullSecret and registry access.
+    - If the previous working image is known, roll back to it.
   remediation:
     kind: gitops_patch
     action: rollback_image
     params: {}
 
 - id: config-error
-  title: Eksik/hatalı yapılandırma
+  title: Missing or invalid configuration
   category: config_error
   match:
     signals: [config_error]
     alerts: [KubePodCrashLooping, KubeContainerWaiting]
-  description: Uygulama gerekli env değişkeni, ConfigMap veya Secret olmadan başlayamıyor.
+  description: The application cannot start without a required env variable, ConfigMap or Secret.
   steps:
-    - Eksik anahtarı loglardan belirle.
-    - İlgili ConfigMap/Secret'ın namespace'te var olduğunu ve deployment'a bağlandığını kontrol et.
-    - Secret değerleri copilot tarafından asla yazılmaz; sahibine yönlendir.
+    - Identify the missing key from the logs.
+    - Check that the ConfigMap/Secret exists in the namespace and is mounted in the deployment.
+    - The copilot never writes secret values; route this to the owner.
   remediation:
     kind: manual
 
 - id: disk-full
-  title: Disk dolu
+  title: Disk full
   category: disk_full
   match:
     signals: [disk_full]
     alerts: [NodeFilesystemAlmostOutOfSpace, KubePersistentVolumeFillingUp]
-  description: Node veya volume üzerinde boş alan kalmadı.
+  description: No free space left on the node or volume.
   steps:
-    - En çok yer kaplayan dizinleri bul (log, cache, eski imajlar).
-    - Log rotation ve retention ayarlarını kontrol et.
-    - Gerekirse PVC boyutunu artır.
+    - Find the largest directories (logs, cache, old images).
+    - Check log rotation and retention settings.
+    - Increase the PVC size if needed.
   remediation:
     kind: manual
 
 - id: dependency-down
-  title: Bağımlı servise erişilemiyor
+  title: Dependency unreachable
   category: dependency
   match:
     signals: [dependency_down]
     alerts: [KubePodCrashLooping, KubePodNotReady]
-  description: Uygulama DB, cache, harici API veya DNS'e bağlanamıyor.
+  description: The application cannot connect to a DB, cache, external API or DNS.
   steps:
-    - Hedef servisin ayakta olduğunu ve endpoint'lerinin dolu olduğunu kontrol et.
-    - NetworkPolicy ve DNS çözümlemesini doğrula.
-    - Sorun bağımlılıktaysa alert'i o servisin ekibine yönlendir.
+    - Check that the target service is up and has endpoints.
+    - Verify NetworkPolicy and DNS resolution.
+    - If the problem is in the dependency, route the alert to that service's team.
   remediation:
     kind: manual
 
 - id: probe-failure
-  title: Probe başarısız
+  title: Probe failing
   category: probe_failure
   match:
     signals: [probe_failure]
     alerts: [KubePodNotReady]
-  description: Readiness/liveness probe zamanında başarılı olmuyor.
+  description: The readiness/liveness probe does not succeed in time.
   steps:
-    - Uygulamanın açılış süresini probe initialDelaySeconds ile karşılaştır.
-    - Probe endpoint'inin bağımlılıkları kontrol edip etmediğine bak.
+    - Compare the application's startup time with the probe's initialDelaySeconds.
+    - Check whether the probe endpoint also checks dependencies.
   remediation:
     kind: manual
