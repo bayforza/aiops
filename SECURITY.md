@@ -1,21 +1,21 @@
-# Güvenlik politikası
+# Security policy
 
-## Açık bildirimi
+## Reporting a vulnerability
 
-Güvenlik açıklarını lütfen herkese açık issue olarak **açmayın**. GitHub'daki
-**Security → Report a vulnerability** (private vulnerability reporting) ile bildirin.
-İlk yanıt hedefi 3 iş günüdür.
+Please do **not** open a public issue for security vulnerabilities. Report them through GitHub
+**Security → Report a vulnerability** (private vulnerability reporting). We aim to respond within 3 business days.
 
-## Kapsam ve tasarım güvenceleri
+## Scope and design guarantees
 
-- Copilot varsayılan olarak **salt okuma** çalışır; hiçbir komutu kendisi çalıştırmaz, PR'ları merge etmez.
-- Cloud ikinci görüş **varsayılan olarak kapalıdır**. Açıldığında yalnızca anonimleştirilmiş özet gönderilir:
-  parola, token, JWT, private key gibi değerler silinir; namespace, workload, pod, host, IP ve e-posta
-  geri çevrilebilir etiketlerle (`NAMESPACE_1`...) değiştirilir. Gönderilen metnin tamamı audit log'a ve
-  incident kaydına (`second_opinion.sent_payload`) yazılır.
-- `local_only_namespaces` ve `data_classification` etiketi ile işaretlenen olaylar hiçbir koşulda dışarı çıkmaz.
-- Her adım hash zincirli `audit.jsonl` dosyasına yazılır; `aiops-copilot audit-verify` ile doğrulanır.
-- API anahtarları yapılandırma dosyasına değil ortam değişkenine konur.
+- The copilot runs **read-only** by default; it never executes commands itself and never merges PRs.
+- The cloud second opinion is **off by default**. When enabled, only an anonymised summary is sent:
+  values such as passwords, tokens, JWTs and private keys are removed; namespaces, workloads, pods, hosts,
+  IPs and e-mail addresses are replaced with reversible placeholders (`NAMESPACE_1`, ...). The full text
+  that was sent is written to the audit log and to the incident record (`second_opinion.sent_payload`).
+- Incidents marked with `local_only_namespaces` or the `data_classification` label never leave the
+  organisation under any condition.
+- Every step is written to the hash-chained `audit.jsonl`; verify it with `aiops-copilot audit-verify`.
+- API keys go in environment variables, not in the configuration file.
 
-Anonimleştirme regex tabanlıdır ve %100 garanti vermez. Düzenlemeye tabi ortamlarda (ör. BDDK) cloud
-özelliğini açmadan önce `sent_payload` örneklerini kendi verinizle inceleyin.
+Anonymisation is regex-based and is not a 100% guarantee. In regulated environments (e.g. banking data
+residency rules), review samples of `sent_payload` with your own data before enabling the cloud feature.

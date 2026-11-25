@@ -63,8 +63,8 @@ def merge_results(det: RCAResult, llm: dict | None, candidates: list[Runbook]) -
     if det.category != Category.UNKNOWN and det.confidence >= STRONG_RULE and category != det.category:
         return det.model_copy(update={
             "confidence": min(det.confidence, 0.5),
-            "notes": det.notes + [f"LLM '{category.value}' dedi, kural tabanlı analiz '{det.category.value}' "
-                                  "buldu; güven düşürüldü, otomatik PR açılmaz."],
+            "notes": det.notes + [f"LLM said '{category.value}', rule-based analysis found '{det.category.value}'; "
+                                  "confidence lowered, no automatic PR."],
         })
     if category == det.category and category != Category.UNKNOWN:
         return RCAResult(category=category, root_cause=root_cause or det.root_cause,
@@ -85,7 +85,7 @@ def _category(value) -> Category | None:
 
 def build_remediation(result: RCAResult, runbook: Runbook | None, signals: list[Signal]) -> Remediation:
     if runbook is None:
-        return Remediation(kind="none", description="Eşleşen runbook yok; manuel inceleme önerilir.")
+        return Remediation(kind="none", description="No matching runbook; manual investigation recommended.")
     description = runbook.title + (": " + " ".join(runbook.steps) if runbook.steps else "")
     rem = runbook.remediation
     if rem.kind != "gitops_patch":
@@ -98,7 +98,7 @@ def build_remediation(result: RCAResult, runbook: Runbook | None, signals: list[
     if rem.action == "rollback_image":
         prev = by_kind.get("recent_rollout")
         if not prev or not prev.data.get("previous_image"):
-            return Remediation(kind="manual", description=description + " (Önceki imaj bilinmiyor.)")
+            return Remediation(kind="manual", description=description + " (Previous image unknown.)")
         params["image"] = prev.data["previous_image"]
     return Remediation(kind="gitops_patch", action=rem.action, params=params, description=description)
 
@@ -165,7 +165,7 @@ class Pipeline:
                 self._audit("llm_called", incident, model=self.llm.model, usage=usage,
                             ms=incident.timings_ms["llm"])
             except Exception as exc:  # noqa: BLE001 - fall back to rules
-                det.notes.append(f"LLM kullanılamadı, kural tabanlı sonuç kullanıldı: {exc}")
+                det.notes.append(f"LLM unavailable, using the rule-based result: {exc}")
                 self._audit("llm_failed", incident, error=str(exc)[:300])
 
         result = merge_results(det, llm_answer, candidates)
@@ -205,7 +205,7 @@ class Pipeline:
             messages = build_messages(masked, candidates, self.s.llm.language)
             answer, usage = await self.cloud_llm.complete_json(messages)
         except Exception as exc:  # noqa: BLE001 - the local answer stands
-            result.notes.append(f"Cloud ikinci görüş alınamadı, yerel sonuç kullanıldı: {exc}")
+            result.notes.append(f"Cloud second opinion failed, using the local result: {exc}")
             self._audit("cloud_failed", incident, error=str(exc)[:300])
             return result
         incident.timings_ms["cloud"] = int((time.perf_counter() - t0) * 1000)
@@ -231,21 +231,21 @@ class Pipeline:
         }
         if agrees:
             result.confidence = round(min(0.95, max(result.confidence, cloud_result.confidence) + 0.05), 2)
-            result.notes.append("Cloud ikinci görüş yerel sonuçla aynı; güven artırıldı.")
+            result.notes.append("Cloud second opinion agrees with the local result; confidence raised.")
         elif min(cloud_result.confidence, cloud_ev.score) > min(result.confidence, ev.score):
             local = {"category": result.category.value, "confidence": result.confidence}
             result = cloud_result.model_copy(update={
                 # The cloud's self-reported confidence is not trusted beyond what the evidence supports.
                 "confidence": round(min(cloud_result.confidence, cloud_ev.score), 2),
                 "source": result.source.replace("llm", "cloud") if "llm" in result.source else "cloud",
-                "notes": cloud_result.notes + [f"Cloud sonucu kanıtla daha iyi destekleniyor; yerel sonuç "
-                                               f"{local['category']} ({local['confidence']:.0%}) idi."],
+                "notes": cloud_result.notes + [f"Cloud result is better supported by the evidence; local result was "
+                                               f"{local['category']} ({local['confidence']:.0%})."],
                 "evidence_score": cloud_ev.score, "confidence_reasons": cloud_ev.reasons,
                 "route": decision.route, "route_reason": decision.reason,
             })
         else:
-            result.notes.append(f"Cloud farklı kategori önerdi ({cloud_result.category.value}) ama kanıt "
-                                "yerel sonucu destekliyor; yerel sonuç korundu.")
+            result.notes.append(f"Cloud suggested a different category ({cloud_result.category.value}) "
+                                "but the evidence supports the local result; local result kept.")
         result.second_opinion = opinion
         return result
 
@@ -255,8 +255,8 @@ class Pipeline:
         if self.actor and a.remediation.kind == "gitops_patch":
             allowed = policy.autonomy_level >= 1 and a.confidence >= policy.min_confidence
             if not allowed:
-                a.notes.append(f"PR açılmadı (seviye {policy.autonomy_level}, güven {a.confidence:.0%} < "
-                               f"{policy.min_confidence:.0%} veya seviye 0); sadece diff önizlemesi üretildi.")
+                a.notes.append(f"No PR opened (level {policy.autonomy_level}, confidence {a.confidence:.0%} < "
+                               f"{policy.min_confidence:.0%} or level 0); diff preview only.")
             record = await self.actor.propose(incident, preview_only=not allowed)
             incident.actions.append(record)
             self._audit("action", incident, kind=record.kind, status=record.status, url=record.url,

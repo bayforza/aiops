@@ -18,7 +18,7 @@ class LLMConfig(BaseModel):
     timeout_s: float = 180.0
     temperature: float = 0.1
     max_tokens: int = 800
-    language: str = "tr"
+    language: str = "en"
 
 
 class CloudConfig(BaseModel):

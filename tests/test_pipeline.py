@@ -42,7 +42,7 @@ def llm_reply(obj: dict) -> httpx.Response:
 def test_llm_fills_rule_gap(settings, runbooks):
     route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=llm_reply({
         "category": "config_error", "confidence": 0.8,
-        "root_cause": "rules.yaml dosyasında YAML sözdizimi hatası var.",
+        "root_cause": "rules.yaml has a YAML syntax error.",
         "evidence": ["yaml: line 12: mapping values are not allowed"], "runbook_id": None}))
     c = case("config-yaml-parse-error")
     inc = asyncio.run(make_pipeline(settings, runbooks, c, LLMClient(LLM_URL, "m")).run(
@@ -63,7 +63,7 @@ def test_llm_failure_falls_back_to_rules(settings, runbooks):
     inc = asyncio.run(make_pipeline(settings, runbooks, c, LLMClient(LLM_URL, "m")).run(
         Alert.model_validate(c["alert"])))
     assert inc.analysis.category.value == "oom"
-    assert any("LLM kullanılamadı" in n for n in inc.analysis.notes)
+    assert any("LLM unavailable" in n for n in inc.analysis.notes)
     ok, _ = AuditLog(settings.audit_path).verify()
     assert ok
 
@@ -86,7 +86,7 @@ def test_level0_only_previews(settings, runbooks):
     c = case("oom-checkout-cache")
     inc = asyncio.run(make_pipeline(settings, runbooks, c, actor=actor).run(Alert.model_validate(c["alert"])))
     assert inc.actions[0].kind == "dry_run_patch"
-    assert any("PR açılmadı" in n for n in inc.analysis.notes)
+    assert any("No PR opened" in n for n in inc.analysis.notes)
 
 
 def _git(cwd, *args):
@@ -118,7 +118,7 @@ def test_pull_request_mode(settings, runbooks, tmp_path, root, monkeypatch):
     assert act.url.endswith("/pull/1")
     req = json.loads(pr.calls[0].request.content)
     assert req["head"] == f"aiops/{inc.id}" and req["base"] == "main"
-    assert "insan onayı olmadan merge edilmemelidir" in req["body"]
+    assert "must not be merged without human approval" in req["body"]
     branches = subprocess.run(["git", "-C", str(remote), "branch"], capture_output=True, text=True).stdout
     assert f"aiops/{inc.id}" in branches
     # The operator's checkout is untouched.
@@ -166,7 +166,7 @@ def test_uncertain_incident_gets_anonymised_cloud_opinion(settings, runbooks, mo
     cloud_settings(settings, monkeypatch)
     route = respx.post(f"{CLOUD_URL}/chat/completions").mock(return_value=llm_reply({
         "category": "dependency", "confidence": 0.9,
-        "root_cause": "WORKLOAD_1 yavaş bir alt servisi bekliyor.", "evidence": [], "runbook_id": None}))
+        "root_cause": "WORKLOAD_1 is waiting on a slow downstream service.", "evidence": [], "runbook_id": None}))
     inc = run_with_cloud(settings, runbooks, "latency-no-signal")
     sent = json.loads(route.calls[0].request.content)["messages"][1]["content"]
     assert "orders-api" not in sent and "shop" not in sent and "WORKLOAD_1" in sent
@@ -196,4 +196,4 @@ def test_cloud_failure_keeps_local_result(settings, runbooks, monkeypatch):
     respx.post(f"{CLOUD_URL}/chat/completions").mock(return_value=httpx.Response(503))
     inc = run_with_cloud(cloud_settings(settings, monkeypatch), runbooks, "latency-no-signal")
     assert inc.analysis.category.value == "unknown"
-    assert any("Cloud ikinci görüş alınamadı" in n for n in inc.analysis.notes)
+    assert any("Cloud second opinion failed" in n for n in inc.analysis.notes)

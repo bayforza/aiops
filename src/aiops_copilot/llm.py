@@ -26,7 +26,7 @@ Reply with a single JSON object and nothing else:
 _LANGUAGES = {"tr": "Turkish", "en": "English"}
 
 
-def build_messages(context: str, runbooks: list[Runbook], language: str = "tr") -> list[dict[str, str]]:
+def build_messages(context: str, runbooks: list[Runbook], language: str = "en") -> list[dict[str, str]]:
     system = SYSTEM_PROMPT.format(
         categories=", ".join(c.value for c in Category),
         language_name=_LANGUAGES.get(language, language),

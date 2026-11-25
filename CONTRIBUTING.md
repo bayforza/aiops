@@ -1,32 +1,34 @@
-# Katkı rehberi
+# Contributing
 
-AIOps Copilot, Apache-2.0 lisanslı açık kaynak bir projedir (Community Edition). Katkılar memnuniyetle karşılanır.
+AIOps Copilot is an open-source project under the Apache-2.0 license (Community Edition). Contributions are welcome.
 
-## Başlarken
+## Getting started
 
 ```bash
-make setup     # .venv + bağımlılıklar
-make test      # pytest; LLM, cloud ve GitHub mock'lu, cluster gerekmez
+make setup     # .venv + dependencies
+make test      # pytest; LLM, cloud and GitHub are mocked, no cluster needed
 make lint      # ruff
 make eval-rules
 ```
 
-## En değerli katkılar
+## Most valuable contributions
 
-1. **Yeni incident senaryosu.** `eval/fixtures.yaml` içine anonimleştirilmiş gerçek bir vaka ekleyin
-   (alert + kubernetes durumu + log satırları + beklenen kategori). Ürünün kalitesi bu setle ölçülür.
-2. **Runbook.** `runbooks/` altına onaylı bir düzeltme. Model yalnızca buradan seçer, fix uydurmaz.
-3. **Collector.** Yeni bir veri kaynağı (Elasticsearch, Graylog, Tempo...). `collectors/base.py`
-   arayüzünü uygulayın; collector'lar **salt okuma** olmalı.
+1. **A new incident scenario.** Add an anonymised real incident to `eval/fixtures.yaml`
+   (alert + Kubernetes state + log lines + expected category). Product quality is measured with this set.
+2. **A runbook.** An approved fix under `runbooks/`. The model only picks from these; it never invents a fix.
+3. **A collector.** A new data source (Elasticsearch, Graylog, Tempo, ...). Implement the interface in
+   `collectors/base.py`; collectors must be **read-only**.
 
-## Kurallar
+## Rules
 
-- Her değişiklik test ile gelir; `make test` ve `make lint` temiz olmalı.
-- Kural tabanlı sinyaller modele tercih edilir: kesin bir sinyal kodla bulunabiliyorsa prompt'a yazmayın.
-- Dışarı veri gönderen her yol varsayılan olarak **kapalı** olmalı, `anonymize.py`'den geçmeli ve audit log'a yazılmalı.
-- Gerçek müşteri verisi, kimlik bilgisi veya iç hostname içeren fixture göndermeyin.
-- Commit mesajları kısa ve açıklayıcı olsun; PR açıklamasında neyi nasıl test ettiğinizi yazın.
+- Every change comes with tests; `make test` and `make lint` must pass.
+- Prefer rule-based signals over the model: if a definitive signal can be found in code, don't put it in the prompt.
+- Any path that sends data outside the organisation must be **off by default**, go through `anonymize.py`
+  and be written to the audit log.
+- Do not submit fixtures containing real customer data, credentials or internal hostnames.
+- Keep commit messages short and descriptive; in the PR description, say what you tested and how.
+- Write code, comments, docs and messages in English.
 
-## Lisans
+## License
 
-Gönderdiğiniz katkılar Apache License 2.0 altında lisanslanır (lisansın 5. maddesi).
+Contributions you submit are licensed under the Apache License 2.0 (section 5 of the license).

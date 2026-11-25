@@ -15,12 +15,12 @@ def render_message(incident: Incident) -> str:
     a = incident.analysis
     lines = [
         f"*{incident.alert.name}* · {incident.target.namespace}/{incident.target.workload or incident.target.pod}",
-        f"Kategori: {a.category.value} · Güven: {a.confidence:.0%} · Kaynak: {a.source}",
-        f"Kök neden: {a.root_cause}",
+        f"Category: {a.category.value} · Confidence: {a.confidence:.0%} · Source: {a.source}",
+        f"Root cause: {a.root_cause}",
     ]
     lines += [f"• {e}" for e in a.evidence[:4]]
     if a.remediation.kind != "none":
-        lines.append(f"Öneri ({a.remediation.kind}): {a.remediation.description}")
+        lines.append(f"Proposal ({a.remediation.kind}): {a.remediation.description}")
     for act in incident.actions:
         if act.url:
             lines.append(f"PR: {act.url}")

@@ -52,43 +52,43 @@ class EvidenceAssessment:
 def assess(category: Category, signals: list[Signal], rules: RCAResult, llm_category: Category | None = None,
            past_success_rate: float | None = None, similar_incidents: int = 0) -> EvidenceAssessment:
     if category == Category.UNKNOWN:
-        return EvidenceAssessment(0.2, [], ["kategori belirlenemedi"])
+        return EvidenceAssessment(0.2, [], ["category could not be determined"])
 
     relevant = [s for s in signals if s.kind in CATEGORY_SIGNALS.get(category, set())]
     reasons: list[str] = []
     if not relevant:
         score = 0.25
-        reasons.append("bu kategoriyi destekleyen deterministik sinyal yok")
+        reasons.append("no deterministic signal supports this category")
     else:
         strongest = max(s.weight for s in relevant)
         score = 0.5 * strongest
-        reasons.append(f"en güçlü sinyal {strongest:.1f} ({max(relevant, key=lambda s: s.weight).kind})")
+        reasons.append(f"strongest signal {strongest:.1f} ({max(relevant, key=lambda s: s.weight).kind})")
     sources = sorted({signal_source(s) for s in relevant})
     if len(sources) > 1:
         bonus = min(0.3, 0.15 * (len(sources) - 1))
         score += bonus
-        reasons.append(f"{len(sources)} bağımsız kaynak aynı nedeni gösteriyor: {', '.join(sources)}")
+        reasons.append(f"{len(sources)} independent sources point at the same cause: {', '.join(sources)}")
 
     if rules.category == category:
         score += 0.2
-        reasons.append("kural tabanlı analiz aynı kategoriyi buldu")
+        reasons.append("rule-based analysis found the same category")
     elif rules.category != Category.UNKNOWN:
         score -= 0.1
-        reasons.append(f"kural tabanlı analiz farklı: {rules.category.value}")
+        reasons.append(f"rule-based analysis differs: {rules.category.value}")
 
     if llm_category is not None:
         if llm_category == category:
             score += 0.1
-            reasons.append("model aynı kategoriyi buldu")
+            reasons.append("model found the same category")
         else:
             score -= 0.15
-            reasons.append(f"model farklı kategori dedi: {llm_category.value}")
+            reasons.append(f"model chose a different category: {llm_category.value}")
 
     if past_success_rate is not None:
         score += 0.2 * (past_success_rate - 0.5)
-        reasons.append(f"bu çözümün geçmiş başarı oranı {past_success_rate:.0%}")
+        reasons.append(f"past success rate of this fix {past_success_rate:.0%}")
     if similar_incidents:
         score += min(0.1, 0.05 * similar_incidents)
-        reasons.append(f"{similar_incidents} benzer geçmiş olay")
+        reasons.append(f"{similar_incidents} similar past incidents")
 
     return EvidenceAssessment(round(max(0.0, min(0.95, score)), 2), sources, reasons)

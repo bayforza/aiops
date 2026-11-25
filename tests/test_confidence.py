@@ -26,8 +26,8 @@ def test_independent_sources_and_agreement_raise_score():
 def test_no_supporting_signal_is_weak():
     ev = assess(Category.DISK_FULL, [OOM], RCAResult(category=Category.OOM), llm_category=Category.DISK_FULL)
     assert ev.score < 0.5
-    assert any("deterministik sinyal yok" in r for r in ev.reasons)
-    assert any("kural tabanlı analiz farklı" in r for r in ev.reasons)
+    assert any("no deterministic signal" in r for r in ev.reasons)
+    assert any("rule-based analysis differs" in r for r in ev.reasons)
 
 
 def test_model_disagreement_lowers_score():
