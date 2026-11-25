@@ -119,6 +119,8 @@ class RCAResult(BaseModel):
     route: str = "local"  # local | local_only | cloud
     route_reason: str = ""
     second_opinion: dict[str, Any] | None = None
+    # Who produced the final answer: {"name", "model", "kind": rules | local | cloud}.
+    answered_by: dict[str, str] = Field(default_factory=lambda: {"name": "rules", "model": "", "kind": "rules"})
 
 
 class ActionRecord(BaseModel):
@@ -127,6 +129,19 @@ class ActionRecord(BaseModel):
     detail: str = ""
     url: str | None = None
     diff: str | None = None
+
+
+class ModelCall(BaseModel):
+    """One request to a model, successful or not, for latency and usage reporting."""
+
+    name: str
+    model: str
+    kind: str  # local | cloud
+    ok: bool
+    ms: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    error: str | None = None
 
 
 class Incident(BaseModel):
@@ -139,3 +154,7 @@ class Incident(BaseModel):
     analysis: RCAResult = Field(default_factory=RCAResult)
     actions: list[ActionRecord] = Field(default_factory=list)
     timings_ms: dict[str, int] = Field(default_factory=dict)
+    model_calls: list[ModelCall] = Field(default_factory=list)
+    # When the webhook received the alert (the analysis may wait in the queue before it starts).
+    received_at: datetime | None = None
+    status: str = "open"  # open | acknowledged | resolved

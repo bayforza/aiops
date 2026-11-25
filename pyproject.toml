@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aiops-copilot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local, read-only AIOps incident copilot: RCA with a local LLM and GitOps pull requests"
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,12 +22,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "respx>=0.21", "ruff>=0.4"]
+# Claude as the cloud second opinion (cloud.provider: anthropic).
+claude = ["anthropic>=2.0"]
 
 [project.scripts]
 aiops-copilot = "aiops_copilot.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+aiops_copilot = ["ui/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

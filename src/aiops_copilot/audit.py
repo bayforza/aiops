@@ -47,6 +47,19 @@ class AuditLog:
                 fh.write(json.dumps(record, default=str) + "\n")
             return record
 
+    def events(self, incident_id: str) -> list[dict[str, Any]]:
+        """All records of one incident, oldest first (for the incident timeline)."""
+        if not self.path.exists():
+            return []
+        out = []
+        with self.path.open() as fh:
+            for line in fh:
+                if incident_id in line:
+                    rec = json.loads(line)
+                    if rec.get("incident_id") == incident_id:
+                        out.append({k: rec[k] for k in ("ts", "event", "data")})
+        return out
+
     def verify(self) -> tuple[bool, str]:
         if not self.path.exists():
             return True, "audit log is empty"

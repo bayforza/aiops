@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field, field_validator
 
 class LLMConfig(BaseModel):
     enabled: bool = True
+    # Label shown in the UI and statistics; defaults to the model name.
+    name: str | None = None
     # Any OpenAI-compatible endpoint: Ollama, llama.cpp server, vLLM.
     base_url: str = "http://localhost:11434/v1"
     model: str = "qwen2.5:7b-instruct"
@@ -25,6 +27,11 @@ class CloudConfig(BaseModel):
     """Optional second opinion from a cloud model. Off by default; see routing.py."""
 
     enabled: bool = False
+    # "openai": any OpenAI-compatible endpoint; "anthropic": Claude through the official SDK.
+    provider: str = "openai"
+    name: str | None = None  # label in the UI; defaults to the model name
+    # Optional for provider "anthropic": low | medium | high | xhigh | max (unset = the model's default).
+    effort: str | None = None
     # Any OpenAI-compatible endpoint the organisation has approved (in-country provider, Azure, ...).
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4.1-mini"
@@ -93,6 +100,8 @@ class NotifyConfig(BaseModel):
 
 class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    # More local models, tried in order when the one before fails or times out.
+    local_llms: list[LLMConfig] = Field(default_factory=list)
     cloud: CloudConfig = Field(default_factory=CloudConfig)
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     loki: LokiConfig = Field(default_factory=LokiConfig)
@@ -104,6 +113,8 @@ class Settings(BaseModel):
     runbooks_dir: str = "runbooks"
     output_dir: str = "out"
     audit_path: str = "out/audit.jsonl"
+    # SQLite file holding incidents, received alerts and operator feedback for the UI.
+    store_path: str = "out/aiops.db"
 
 
 _ENV_OVERRIDES = {

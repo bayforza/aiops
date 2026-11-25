@@ -17,6 +17,31 @@ Alertmanager ──webhook──▶ Copilot ──▶ Kubernetes / Prometheus / 
                               └─ Hash-chained audit log  +  Slack/Teams notification
 ```
 
+![Incident overview (demo data from the recorded incidents, mocked models)](docs/images/ui-overview.png)
+
+## Incident UI
+
+`make run` serves the UI at `http://localhost:8080/ui/` (no build step, no external requests, works air-gapped).
+
+- **Overview:** open incidents, root cause accuracy and fix accuracy from operator ratings, rating coverage,
+  time to analysis (p50/p95), cloud usage, incidents per day, accuracy per category, and whether the reported
+  confidence matches how often the copilot was right.
+- **Incidents:** filter by status and category, search; each row shows the root cause, confidence, which AI
+  answered (rules, a local model or the cloud) and how long it took.
+- **Incident detail:** root cause with evidence and confidence reasons, the fix (runbook steps, proposed diff,
+  PR link), signals, Drain3 log patterns, metrics, recent changes, the cloud second opinion with exactly what
+  was sent, a response-time waterfall per stage and per collector, every model call with tokens and latency,
+  the audit timeline, and acknowledge / resolve.
+- **Rating:** operators mark the root cause and the fix as correct, partly correct or wrong and can write what
+  the real cause was. Accuracy per model is computed from these ratings.
+- **Alerts:** everything Alertmanager sent, including duplicates and resolved notifications; a resolved
+  notification closes its incident.
+- **Models:** the configured local models and cloud model, success rate, p50/p95 latency and token usage.
+
+Try it without a cluster: `make demo-ui` runs the recorded incidents into `out/aiops.db`, then `make run`.
+
+![Incident detail (demo data, mocked models)](docs/images/ui-incident.png)
+
 ## Design principles
 
 - **Rules first, then the model.** Definitive signals such as OOMKilled, ImagePullBackOff and
@@ -32,7 +57,12 @@ Alertmanager ──webhook──▶ Copilot ──▶ Kubernetes / Prometheus / 
 - **Auditability.** Every step is written, hash-chained, to `out/audit.jsonl`; check its integrity with
   `aiops-copilot audit-verify`.
 
-## Hybrid AI: local first, cloud only when needed
+## Several models, local first, cloud only when needed
+
+`llm` plus `local_llms` list the local models in the order they are tried: when one fails or times out the
+next one answers, and the UI records which one did. The cloud second opinion (`cloud.provider: openai` for any
+OpenAI-compatible endpoint, or `anthropic` for Claude through the official SDK) is a separate step below.
+
 
 The model's self-reported confidence is not trusted on its own. `confidence.py` computes a separate
 **evidence score** from what was actually observed: is there a definitive signal for the category, do
@@ -127,6 +157,9 @@ The model writes `root_cause` in the language set by `llm.language` (default `en
 | `src/aiops_copilot/routing.py` | Local / cloud routing decision |
 | `src/aiops_copilot/anonymize.py` | Secret removal, reversible masking |
 | `src/aiops_copilot/actions/` | GitOps patches and opening PRs |
+| `src/aiops_copilot/store.py` | SQLite store: incidents, received alerts, operator ratings |
+| `src/aiops_copilot/stats.py` | Accuracy, model usage and latency numbers for the UI |
+| `src/aiops_copilot/ui/` | The incident UI (plain HTML/CSS/JS) |
 | `runbooks/` | Approved fixes (the model only picks from these) |
 | `gitops/apps/` | Demo applications and failure scenarios |
 | `deploy/` | kind and monitoring stack values |
@@ -137,8 +170,9 @@ The model writes `root_cause` in the language set by `llm.language` (default `en
 | Week | Scope | Status |
 |---|---|---|
 | 1 | Local AI engine: collectors, Drain3, rules, local LLM, runbooks, dry-run PR, audit, eval | Done |
-| 2 | Hybrid AI: evidence score, local/cloud routing, anonymisation, cloud usage rate | This release |
-| 3 | Feedback and knowledge base: PostgreSQL + pgvector, incident UI (React), correct/partial/wrong rating, RAG over past incidents, interactive Slack/Teams buttons | Next |
+| 2 | Hybrid AI: evidence score, local/cloud routing, anonymisation, cloud usage rate | Done |
+| 3 | Feedback and knowledge base: incident UI, correct/partial/wrong rating, accuracy and latency per model, several local models, Claude as cloud option | This release |
+| 3b | PostgreSQL + pgvector, RAG over past incidents and ratings, interactive Slack/Teams buttons | Next |
 | 4 | Remediation: real GitHub PRs, ArgoCD tracking and post-deploy verification, Terraform plan + approval, Ansible/AWX, Jira/ServiceNow tickets | Planned |
 | ★ | Tempo traces, Elasticsearch/Graylog, Helm chart + RBAC + Dockerfile + CI, 20+ scenarios, demo video | Planned |
 

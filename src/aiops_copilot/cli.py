@@ -40,8 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         from .server import create_app
+        from .store import Store
 
-        uvicorn.run(create_app(pipeline), host=args.host, port=args.port)
+        app = create_app(pipeline, store=Store(settings.store_path))
+        print(f"UI: http://localhost:{args.port}/ui/")
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     raw = json.load(open(args.alert_file))

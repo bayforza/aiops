@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import platform
 import time
 from pathlib import Path
@@ -21,10 +20,12 @@ import yaml
 
 from aiops_copilot.collectors import FixtureCollector
 from aiops_copilot.config import load_settings
+from aiops_copilot.factory import build_cloud_client
 from aiops_copilot.llm import LLMClient
 from aiops_copilot.models import Alert, IncidentContext
 from aiops_copilot.pipeline import Pipeline
 from aiops_copilot.runbooks import RunbookStore
+from aiops_copilot.store import Store
 
 FIXTURES = Path(__file__).with_name("fixtures.yaml")
 
@@ -34,12 +35,17 @@ def load_fixtures(path: Path = FIXTURES) -> list[dict]:
 
 
 async def run_case(case: dict, settings, runbooks: RunbookStore, llm: LLMClient | None,
-                   cloud_llm: LLMClient | None = None) -> dict:
+                   cloud_llm: LLMClient | None = None, store: Store | None = None) -> dict:
     ctx = IncidentContext.model_validate(case.get("context") or {})
     pipeline = Pipeline(settings, [FixtureCollector(ctx, case.get("workload"))], runbooks, llm=llm,
                         cloud_llm=cloud_llm)
     t0 = time.perf_counter()
-    incident = await pipeline.run(Alert.model_validate(case["alert"]))
+    alert = Alert.model_validate(case["alert"])
+    alert_id = store.record_alert(alert, "queued") if store else None
+    incident = await pipeline.run(alert)
+    if store:
+        store.save_incident(incident)
+        store.link_alert(alert_id, incident.id)
     a = incident.analysis
     return {
         "name": case["name"],
@@ -67,16 +73,14 @@ async def main_async(args) -> list[dict]:
     if not args.no_llm and settings.llm.enabled:
         c = settings.llm
         llm = LLMClient(c.base_url, c.model, c.api_key, c.timeout_s, c.temperature, c.max_tokens)
-    cloud_llm = None
-    cc = settings.cloud
-    if args.cloud and cc.enabled and os.environ.get(cc.api_key_env):
-        cloud_llm = LLMClient(cc.base_url, cc.model, os.environ[cc.api_key_env], cc.timeout_s)
+    cloud_llm = build_cloud_client(settings.cloud, settings.llm) if args.cloud else None
+    store = Store(args.store) if args.store else None
     cases = load_fixtures()
     if args.only:
         cases = [c for c in cases if args.only in c["name"]]
     results = []
     for case in cases:  # sequential: measures per-incident latency as a CPU host would see it
-        r = await run_case(case, settings, runbooks, llm, cloud_llm)
+        r = await run_case(case, settings, runbooks, llm, cloud_llm, store)
         results.append(r)
         mark = "OK " if r["ok"] else "XX "
         print(f"{mark} {r['name']:<28} expected={r['expected']:<14} got={r['got']:<14} "
@@ -91,6 +95,7 @@ def main() -> int:
     p.add_argument("--no-llm", action="store_true", help="rules only")
     p.add_argument("--cloud", action="store_true",
                    help="allow cloud second opinions (needs cloud.enabled and the API key env var)")
+    p.add_argument("--store", help="also save the incidents to this UI database (e.g. out/aiops.db)")
     p.add_argument("--only", help="run cases whose name contains this")
     args = p.parse_args()
     results = asyncio.run(main_async(args))
