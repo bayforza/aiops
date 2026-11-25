@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from .actions import GitOpsActor
 from .audit import AuditLog
@@ -33,6 +34,11 @@ def build_pipeline(s: Settings) -> Pipeline:
     if s.llm.enabled:
         llm = LLMClient(s.llm.base_url, s.llm.model, s.llm.api_key, s.llm.timeout_s,
                         s.llm.temperature, s.llm.max_tokens)
+    cloud_llm = None
+    if s.cloud.enabled and os.environ.get(s.cloud.api_key_env):
+        cloud_llm = LLMClient(s.cloud.base_url, s.cloud.model, os.environ[s.cloud.api_key_env], s.cloud.timeout_s,
+                              s.llm.temperature, s.llm.max_tokens)
+        log.warning("cloud fallback enabled: anonymised summaries may be sent to %s", s.cloud.base_url)
     return Pipeline(
         settings=s,
         collectors=collectors,
@@ -41,4 +47,5 @@ def build_pipeline(s: Settings) -> Pipeline:
         actor=GitOpsActor(s.gitops, s.output_dir),
         notifier=Notifier(s.notify.webhook_url),
         audit=AuditLog(s.audit_path),
+        cloud_llm=cloud_llm,
     )

@@ -110,8 +110,15 @@ class RCAResult(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     runbook_id: str | None = None
     remediation: Remediation = Field(default_factory=Remediation)
-    source: str = "deterministic"  # deterministic | llm | llm+deterministic
+    source: str = "deterministic"  # deterministic | llm | llm+deterministic | cloud | cloud+deterministic
     notes: list[str] = Field(default_factory=list)
+    # Evidence-based confidence (confidence.py), independent of what the model says about itself.
+    evidence_score: float | None = None
+    confidence_reasons: list[str] = Field(default_factory=list)
+    # Local / cloud routing (routing.py).
+    route: str = "local"  # local | local_only | cloud
+    route_reason: str = ""
+    second_opinion: dict[str, Any] | None = None
 
 
 class ActionRecord(BaseModel):
